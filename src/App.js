@@ -90,36 +90,42 @@ const App = () => {
 
   // 監聽其他分頁的訊息（包含不同視窗）
   useEffect(() => {
-    // 設置視窗ID
+    // 設置視窗ID（如果沒有的話）
     if (!window.name) {
       window.name = 'tab_' + Math.random().toString(36).substr(2, 9);
     }
 
     const handleStorageChange = (e) => {
-      if (e.key === 'broadcast_message' && e.newValue) {
-        try {
-          const message = JSON.parse(e.newValue);
-          if (message.sender === 'photo-picker-app' && message.senderId !== window.name) {
-            handleBroadcastMessage(message);
+      // 監聽廣播訊息
+      if (e.key === 'broadcast_message') {
+        if (e.newValue) {
+          try {
+            const message = JSON.parse(e.newValue);
+            if (message.sender === 'photo-picker-app' && message.senderId !== window.name) {
+              handleBroadcastMessage(message);
+            }
+          } catch (error) {
+            console.error('解析廣播訊息失敗:', error);
           }
-        } catch (error) {
-          console.error('解析廣播訊息失敗:', error);
         }
       }
 
       // 監聽房間資料的直接變更
-      if (e.key && e.key.startsWith('room_') && e.newValue && roomCode) {
+      if (e.key && e.key.startsWith('room_') && roomCode) {
         if (e.key === `room_${roomCode}`) {
-          try {
-            const updatedRoomData = JSON.parse(e.newValue);
-            if (updatedRoomData.lastUpdated > lastSyncTime) {
-              setRoomData(updatedRoomData);
-              setPhotos(updatedRoomData.photos || []);
-              setUsers(updatedRoomData.users || []);
-              setLastSyncTime(updatedRoomData.lastUpdated);
+          if (e.newValue) {
+            try {
+              const updatedRoomData = JSON.parse(e.newValue);
+              if (updatedRoomData.lastUpdated > lastSyncTime) {
+                setRoomData(updatedRoomData);
+                setPhotos(updatedRoomData.photos || []);
+                setUsers(updatedRoomData.users || []);
+                setLastSyncTime(updatedRoomData.lastUpdated);
+                console.log('從 localStorage 同步資料:', updatedRoomData.lastUpdated);
+              }
+            } catch (error) {
+              console.error('同步房間資料失敗:', error);
             }
-          } catch (error) {
-            console.error('同步房間資料失敗:', error);
           }
         }
       }
@@ -127,16 +133,19 @@ const App = () => {
 
     const handleFocus = () => {
       // 視窗獲得焦點時強制同步
+      console.log('視窗獲得焦點，強制同步');
       syncRoomData();
     };
 
     const handleVisibilityChange = () => {
       // 頁面變為可見時強制同步
       if (!document.hidden) {
+        console.log('頁面變為可見，強制同步');
         syncRoomData();
       }
     };
 
+    // 添加事件監聽器
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -172,14 +181,19 @@ const App = () => {
     
     const storedData = localStorage.getItem(`room_${roomCode}`);
     if (storedData) {
-      const data = JSON.parse(storedData);
-      
-      // 只有當資料更新時間比本地新時才更新
-      if (data.lastUpdated > lastSyncTime) {
-        setRoomData(data);
-        setPhotos(data.photos || []);
-        setUsers(data.users || []);
-        setLastSyncTime(data.lastUpdated);
+      try {
+        const data = JSON.parse(storedData);
+        
+        // 只有當資料更新時間比本地新時才更新
+        if (data.lastUpdated > lastSyncTime) {
+          console.log('同步資料 - 本地時間:', lastSyncTime, '遠端時間:', data.lastUpdated);
+          setRoomData(data);
+          setPhotos(data.photos || []);
+          setUsers(data.users || []);
+          setLastSyncTime(data.lastUpdated);
+        }
+      } catch (error) {
+        console.error('同步資料解析失敗:', error);
       }
     }
   };
@@ -205,6 +219,7 @@ const App = () => {
       lastUpdated: Date.now()
     };
     
+    console.log('更新房間資料:', updatedData.lastUpdated);
     setRoomData(updatedData);
     setLastSyncTime(updatedData.lastUpdated);
     
