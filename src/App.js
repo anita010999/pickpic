@@ -32,11 +32,15 @@ const App = () => {
       lastUpdated: Date.now()
     };
     
+    console.log('創建房間:', code, newRoomData);
+    
     setRoomCode(code);
     setIsHost(true);
     setRoomData(newRoomData);
     setIsConnected(true);
     setLastSyncTime(Date.now());
+    setPhotos([]);
+    setUsers([]);
     
     // 存儲到 localStorage
     localStorage.setItem(`room_${code}`, JSON.stringify(newRoomData));
@@ -53,18 +57,29 @@ const App = () => {
     const storedData = localStorage.getItem(`room_${code}`);
     
     if (storedData) {
-      const data = JSON.parse(storedData);
-      setRoomCode(code);
-      setRoomData(data);
-      setPhotos(data.photos || []);
-      setUsers(data.users || []);
-      setIsHost(false);
-      setIsConnected(true);
-      setJoinRoomCode('');
-      setLastSyncTime(data.lastUpdated || Date.now());
-      
-      // 通知其他分頁有新用戶加入
-      broadcastToOtherTabs('user_joined', { roomCode: code });
+      try {
+        const data = JSON.parse(storedData);
+        console.log('加入房間，載入資料:', data);
+        
+        // 重要：確保所有狀態都正確設定
+        setRoomCode(code);
+        setRoomData(data);
+        setPhotos(data.photos || []);
+        setUsers(data.users || []);
+        setIsHost(false);
+        setIsConnected(true);
+        setJoinRoomCode('');
+        setLastSyncTime(data.lastUpdated || Date.now());
+        
+        console.log('房間資料載入完成 - 照片數量:', (data.photos || []).length);
+        console.log('房間資料載入完成 - 用戶數量:', (data.users || []).length);
+        
+        // 通知其他分頁有新用戶加入
+        broadcastToOtherTabs('user_joined', { roomCode: code });
+      } catch (error) {
+        console.error('加入房間失敗:', error);
+        alert('房間資料讀取失敗，請重試');
+      }
     } else {
       alert('房間代碼不存在或已過期');
     }
@@ -96,12 +111,15 @@ const App = () => {
     }
 
     const handleStorageChange = (e) => {
+      console.log('Storage 事件觸發:', e.key, e.newValue ? '有資料' : '無資料');
+      
       // 監聽廣播訊息
       if (e.key === 'broadcast_message') {
         if (e.newValue) {
           try {
             const message = JSON.parse(e.newValue);
             if (message.sender === 'photo-picker-app' && message.senderId !== window.name) {
+              console.log('收到廣播訊息:', message.type);
               handleBroadcastMessage(message);
             }
           } catch (error) {
@@ -116,12 +134,14 @@ const App = () => {
           if (e.newValue) {
             try {
               const updatedRoomData = JSON.parse(e.newValue);
+              console.log('監聽到房間資料變更:', updatedRoomData.photos?.length || 0, '張照片');
+              
               if (updatedRoomData.lastUpdated > lastSyncTime) {
+                console.log('更新本地資料 - 照片:', updatedRoomData.photos?.length || 0);
                 setRoomData(updatedRoomData);
                 setPhotos(updatedRoomData.photos || []);
                 setUsers(updatedRoomData.users || []);
                 setLastSyncTime(updatedRoomData.lastUpdated);
-                console.log('從 localStorage 同步資料:', updatedRoomData.lastUpdated);
               }
             } catch (error) {
               console.error('同步房間資料失敗:', error);
@@ -134,14 +154,14 @@ const App = () => {
     const handleFocus = () => {
       // 視窗獲得焦點時強制同步
       console.log('視窗獲得焦點，強制同步');
-      syncRoomData();
+      setTimeout(syncRoomData, 100);
     };
 
     const handleVisibilityChange = () => {
       // 頁面變為可見時強制同步
       if (!document.hidden) {
         console.log('頁面變為可見，強制同步');
-        syncRoomData();
+        setTimeout(syncRoomData, 100);
       }
     };
 
@@ -159,16 +179,23 @@ const App = () => {
 
   // 處理來自其他分頁的訊息
   const handleBroadcastMessage = (message) => {
+    console.log('處理廣播訊息:', message.type, message.data.roomCode, '當前房間:', roomCode);
+    
     if (!roomCode || message.data.roomCode !== roomCode) return;
 
     switch (message.type) {
       case 'room_updated':
+        console.log('收到房間更新訊息，執行同步');
         // 同步房間資料
-        syncRoomData();
+        setTimeout(syncRoomData, 100);
         break;
       case 'user_joined':
+        console.log('有新用戶加入，執行同步');
         // 有新用戶加入，重新載入資料
-        syncRoomData();
+        setTimeout(syncRoomData, 100);
+        break;
+      case 'room_created':
+        console.log('收到房間創建訊息');
         break;
       default:
         break;
