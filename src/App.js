@@ -276,19 +276,24 @@ const App = () => {
     }
   };
 
-  // 壓縮圖片函數
-  const compressImage = (file, maxWidth = 800, quality = 0.7) => {
+  // 壓縮圖片函數（更積極的壓縮）
+  const compressImage = (file, maxWidth = 600, quality = 0.5) => {
     return new Promise((resolve) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       const img = new Image();
       
       img.onload = () => {
-        // 計算新尺寸
+        // 計算新尺寸（更小的尺寸）
         let { width, height } = img;
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
+        if (width > maxWidth || height > maxWidth) {
+          if (width > height) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          } else {
+            width = (width * maxWidth) / height;
+            height = maxWidth;
+          }
         }
         
         canvas.width = width;
@@ -297,8 +302,23 @@ const App = () => {
         // 繪製壓縮後的圖片
         ctx.drawImage(img, 0, 0, width, height);
         
-        // 轉換為壓縮的 Base64
-        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        // 轉換為更小的 Base64（更低品質）
+        let compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        
+        // 如果還是太大，再進一步壓縮
+        if (compressedDataUrl.length > 300000) { // 約 300KB
+          compressedDataUrl = canvas.toDataURL('image/jpeg', 0.3);
+        }
+        
+        // 如果還是太大，縮小尺寸
+        if (compressedDataUrl.length > 400000) { // 約 400KB
+          canvas.width = width * 0.7;
+          canvas.height = height * 0.7;
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          compressedDataUrl = canvas.toDataURL('image/jpeg', 0.3);
+        }
+        
+        console.log(`圖片 ${file.name} 壓縮：${(file.size/1024).toFixed(1)}KB → ${(compressedDataUrl.length/1024).toFixed(1)}KB`);
         resolve(compressedDataUrl);
       };
       
@@ -306,27 +326,81 @@ const App = () => {
     });
   };
 
-  // 安全的 localStorage 設定
+  // 檢查 localStorage 使用量
+  const checkStorageUsage = () => {
+    let total = 0;
+    for (let key in localStorage) {
+      if (localStorage.hasOwnProperty(key)) {
+        total += localStorage[key].length + key.length;
+      }
+    }
+    console.log(`localStorage 使用量: ${(total/1024).toFixed(1)}KB / ~5000KB`);
+    return total;
+  };
+
+  // 更安全的 localStorage 設定（積極清理）
   const safeSetItem = (key, value) => {
+    const dataSize = value.length;
+    console.log(`嘗試儲存 ${key}: ${(dataSize/1024).toFixed(1)}KB`);
+    
+    // 檢查當前使用量
+    checkStorageUsage();
+    
     try {
       localStorage.setItem(key, value);
+      console.log('儲存成功');
       return true;
     } catch (error) {
       if (error.name === 'QuotaExceededError') {
-        console.warn('localStorage 空間不足，正在清理舊資料...');
-        // 清理其他房間的舊資料
+        console.warn('localStorage 空間不足，開始清理...');
+        
+        // 1. 清理其他房間
         const allKeys = Object.keys(localStorage);
-        const roomKeys = allKeys.filter(k => k.startsWith('room_') && k !== key);
-        roomKeys.forEach(k => localStorage.removeItem(k));
+        const otherRoomKeys = allKeys.filter(k => k.startsWith('room_') && k !== key);
+        otherRoomKeys.forEach(k => {
+          localStorage.removeItem(k);
+          console.log(`清理舊房間: ${k}`);
+        });
+        
+        // 2. 清理廣播訊息
+        localStorage.removeItem('broadcast_message');
+        
+        // 3. 清理其他可能的資料
+        const cleanupKeys = allKeys.filter(k => !k.startsWith('room_') && k !== key);
+        cleanupKeys.forEach(k => localStorage.removeItem(k));
+        
+        console.log('清理完成，重新嘗試儲存...');
+        checkStorageUsage();
         
         // 再次嘗試
         try {
           localStorage.setItem(key, value);
+          console.log('清理後儲存成功');
           return true;
         } catch (secondError) {
-          console.error('localStorage 儲存失敗，即使清理後仍然空間不足');
-          alert('照片太大，請嘗試較小的檔案');
-          return false;
+          console.error('即使清理後仍然無法儲存');
+          
+          // 最後手段：只保留最基本的資料
+          try {
+            const roomData = JSON.parse(value);
+            const minimalData = {
+              roomCode: roomData.roomCode,
+              photos: roomData.photos ? roomData.photos.slice(-3) : [], // 只保留最新3張照片
+              users: roomData.users || [],
+              created: roomData.created,
+              host: roomData.host,
+              lastUpdated: roomData.lastUpdated
+            };
+            
+            localStorage.setItem(key, JSON.stringify(minimalData));
+            console.log('使用精簡模式儲存成功（僅保留最新3張照片）');
+            alert('存儲空間不足，已自動清理舊照片，僅保留最新3張');
+            return true;
+          } catch (thirdError) {
+            console.error('精簡模式也無法儲存');
+            alert('照片檔案太大，請嘗試更小的圖片或較少的照片數量');
+            return false;
+          }
         }
       }
       console.error('localStorage 設定失敗:', error);
@@ -334,22 +408,36 @@ const App = () => {
     }
   };
 
-  // 處理照片上傳
+  // 處理照片上傳（加強限制）
   const handleFileUpload = async (event) => {
     const files = Array.from(event.target.files);
-    let processedFiles = 0;
-    const newPhotos = [];
     
     if (files.length === 0) return;
     
-    // 顯示上傳進度提示
+    // 限制檔案數量
+    if (files.length > 5) {
+      alert('一次最多只能上傳5張照片');
+      return;
+    }
+    
+    // 檢查檔案大小
+    const oversizedFiles = files.filter(file => file.size > 10 * 1024 * 1024); // 10MB
+    if (oversizedFiles.length > 0) {
+      alert('檔案太大，請選擇小於10MB的圖片');
+      return;
+    }
+    
     console.log(`開始處理 ${files.length} 個檔案...`);
+    
+    const newPhotos = [];
     
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
       
       if (file.type.startsWith('image/')) {
         try {
+          console.log(`處理照片 ${index + 1}/${files.length}: ${file.name}`);
+          
           // 壓縮圖片
           const compressedDataUrl = await compressImage(file);
           
@@ -365,20 +453,30 @@ const App = () => {
           };
           
           newPhotos.push(newPhoto);
-          console.log(`照片 ${file.name} 壓縮完成`);
+          console.log(`照片 ${file.name} 處理完成`);
         } catch (error) {
           console.error(`處理照片 ${file.name} 失敗:`, error);
+          alert(`處理照片 ${file.name} 失敗，請嘗試其他圖片`);
         }
       }
-      
-      processedFiles++;
     }
     
     if (newPhotos.length > 0) {
+      // 檢查是否會超過照片數量限制
+      const totalPhotos = photos.length + newPhotos.length;
+      if (totalPhotos > 10) {
+        alert('房間最多只能有10張照片，請先刪除一些舊照片');
+        return;
+      }
+      
       const updatedPhotos = [...photos, ...newPhotos];
       setPhotos(updatedPhotos);
-      updateRoomData({ photos: updatedPhotos });
-      console.log(`成功上傳 ${newPhotos.length} 張照片`);
+      
+      // 嘗試更新房間資料
+      const success = updateRoomData({ photos: updatedPhotos });
+      if (success) {
+        console.log(`成功上傳 ${newPhotos.length} 張照片`);
+      }
     }
     
     event.target.value = '';
@@ -624,14 +722,14 @@ const App = () => {
           >
             <Upload className="text-gray-400" size={32} />
             <span className="text-gray-600 font-medium">點擊上傳照片（可多選）</span>
-            <span className="text-xs text-gray-500">自動壓縮圖片以節省空間</span>
+            <span className="text-xs text-gray-500">最多10張照片，自動壓縮節省空間</span>
           </button>
         </div>
 
         {photos.length > 0 && (
           <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg">
             <div className="flex justify-between items-center text-sm text-gray-600 mb-2">
-              <span>總照片數: {photos.length}</span>
+              <span>總照片數: {photos.length}/10</span>
               <span>參與者數: {users.length}</span>
             </div>
             
