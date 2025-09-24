@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { Upload, Heart, X, Users, Trophy, Image, Share2, Copy, Wifi } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, Heart, X, Users, Trophy, Image, Share2, Copy, Wifi, RefreshCw } from 'lucide-react';
 
 const App = () => {
   const [photos, setPhotos] = useState([]);
@@ -11,6 +11,7 @@ const App = () => {
   const [joinRoomCode, setJoinRoomCode] = useState('');
   const [roomData, setRoomData] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(0);
   const fileInputRef = useRef(null);
 
   // 生成房間代碼
@@ -27,15 +28,21 @@ const App = () => {
       photos: [],
       users: [],
       created: Date.now(),
-      host: 'Host'
+      host: 'Host',
+      lastUpdated: Date.now()
     };
     
     setRoomCode(code);
     setIsHost(true);
     setRoomData(newRoomData);
     setIsConnected(true);
+    setLastSyncTime(Date.now());
     
+    // 存儲到 localStorage
     localStorage.setItem(`room_${code}`, JSON.stringify(newRoomData));
+    
+    // 廣播給其他分頁
+    broadcastToOtherTabs('room_created', { roomCode: code, roomData: newRoomData });
   };
 
   // 加入房間
@@ -54,10 +61,95 @@ const App = () => {
       setIsHost(false);
       setIsConnected(true);
       setJoinRoomCode('');
+      setLastSyncTime(data.lastUpdated || Date.now());
+      
+      // 通知其他分頁有新用戶加入
+      broadcastToOtherTabs('user_joined', { roomCode: code });
     } else {
       alert('房間代碼不存在或已過期');
     }
   };
+
+  // 廣播訊息給其他分頁
+  const broadcastToOtherTabs = (type, data) => {
+    const message = {
+      type,
+      data,
+      timestamp: Date.now(),
+      sender: 'photo-picker-app'
+    };
+    
+    // 使用 localStorage 事件進行跨分頁通訊
+    localStorage.setItem('broadcast_message', JSON.stringify(message));
+    // 立即移除，觸發其他分頁的 storage 事件
+    localStorage.removeItem('broadcast_message');
+  };
+
+  // 監聽其他分頁的訊息
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'broadcast_message' && e.newValue) {
+        try {
+          const message = JSON.parse(e.newValue);
+          if (message.sender === 'photo-picker-app') {
+            handleBroadcastMessage(message);
+          }
+        } catch (error) {
+          console.error('解析廣播訊息失敗:', error);
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [roomCode]);
+
+  // 處理來自其他分頁的訊息
+  const handleBroadcastMessage = (message) => {
+    if (!roomCode || message.data.roomCode !== roomCode) return;
+
+    switch (message.type) {
+      case 'room_updated':
+        // 同步房間資料
+        syncRoomData();
+        break;
+      case 'user_joined':
+        // 有新用戶加入，重新載入資料
+        syncRoomData();
+        break;
+      default:
+        break;
+    }
+  };
+
+  // 同步房間資料
+  const syncRoomData = () => {
+    if (!roomCode) return;
+    
+    const storedData = localStorage.getItem(`room_${roomCode}`);
+    if (storedData) {
+      const data = JSON.parse(storedData);
+      
+      // 只有當資料更新時間比本地新時才更新
+      if (data.lastUpdated > lastSyncTime) {
+        setRoomData(data);
+        setPhotos(data.photos || []);
+        setUsers(data.users || []);
+        setLastSyncTime(data.lastUpdated);
+      }
+    }
+  };
+
+  // 定期同步資料（每2秒檢查一次）
+  useEffect(() => {
+    if (!roomCode || !isConnected) return;
+
+    const syncInterval = setInterval(() => {
+      syncRoomData();
+    }, 2000);
+
+    return () => clearInterval(syncInterval);
+  }, [roomCode, isConnected, lastSyncTime]);
 
   // 更新房間資料
   const updateRoomData = (newData) => {
@@ -70,7 +162,13 @@ const App = () => {
     };
     
     setRoomData(updatedData);
+    setLastSyncTime(updatedData.lastUpdated);
+    
+    // 存儲到 localStorage
     localStorage.setItem(`room_${roomCode}`, JSON.stringify(updatedData));
+    
+    // 通知其他分頁資料已更新
+    broadcastToOtherTabs('room_updated', { roomCode, roomData: updatedData });
   };
 
   // 添加用戶
@@ -101,7 +199,8 @@ const App = () => {
             name: file.name,
             votes: {},
             totalVotes: 0,
-            uploadedBy: currentUser || 'Unknown'
+            uploadedBy: currentUser || 'Unknown',
+            uploadedAt: Date.now()
           };
           
           newPhotos.push(newPhoto);
@@ -174,6 +273,17 @@ const App = () => {
     });
   };
 
+  // 離開房間
+  const leaveRoom = () => {
+    setIsConnected(false);
+    setRoomCode('');
+    setRoomData(null);
+    setPhotos([]);
+    setUsers([]);
+    setCurrentUser('');
+    setIsHost(false);
+  };
+
   // 排序照片
   const sortedPhotos = [...photos].sort((a, b) => b.totalVotes - a.totalVotes);
   const topPhoto = sortedPhotos[0];
@@ -189,7 +299,7 @@ const App = () => {
               <Wifi className="text-blue-600" size={32} />
             </div>
             <h1 className="text-2xl font-bold text-gray-800 mb-2">照片選擇器</h1>
-            <p className="text-gray-600 text-sm">讓所有人一起參與選照片</p>
+            <p className="text-gray-600 text-sm">支援多分頁即時同步</p>
           </div>
 
           <div className="space-y-6">
@@ -230,6 +340,9 @@ const App = () => {
                   加入
                 </button>
               </div>
+              <p className="text-xs text-gray-500 mt-2 text-center">
+                可以在新分頁開啟相同網址測試多人功能
+              </p>
             </div>
           </div>
         </div>
@@ -249,8 +362,15 @@ const App = () => {
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
               <Wifi size={16} />
-              已連線
+              多分頁同步
             </div>
+            <RefreshCw className="text-gray-400 animate-spin" size={16} title="即時同步中" />
+            <button
+              onClick={leaveRoom}
+              className="text-sm text-red-600 hover:text-red-800 px-2 py-1 rounded"
+            >
+              離開房間
+            </button>
           </div>
         </div>
 
@@ -271,8 +391,12 @@ const App = () => {
             </div>
           </div>
           
-          <div className="text-sm text-gray-600">
+          <div className="text-sm text-gray-600 mb-2">
             {isHost ? '您是房主' : '您已加入房間'} • {users.length} 個參與者 • {photos.length} 張照片
+          </div>
+          
+          <div className="text-xs text-green-600">
+            💡 提示: 複製房間代碼，在新分頁或其他瀏覽器分頁加入來測試多人功能
           </div>
         </div>
 
@@ -337,7 +461,7 @@ const App = () => {
           >
             <Upload className="text-gray-400" size={32} />
             <span className="text-gray-600 font-medium">點擊上傳照片（可多選）</span>
-            <span className="text-xs text-gray-500">支援 JPG、PNG、GIF 等格式</span>
+            <span className="text-xs text-gray-500">上傳後會即時同步到所有分頁</span>
           </button>
         </div>
 
@@ -421,7 +545,7 @@ const App = () => {
         <div className="text-center py-12 text-gray-500">
           <Image size={64} className="mx-auto mb-4 text-gray-300" />
           <p className="text-lg">還沒有照片，開始上傳吧！</p>
-          <p className="text-sm mt-2">支援一次上傳多張照片</p>
+          <p className="text-sm mt-2">支援多分頁即時同步</p>
         </div>
       )}
     </div>
