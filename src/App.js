@@ -70,39 +70,83 @@ const App = () => {
     }
   };
 
-  // 廣播訊息給其他分頁
+  // 廣播訊息給其他分頁/視窗
   const broadcastToOtherTabs = (type, data) => {
     const message = {
       type,
       data,
       timestamp: Date.now(),
-      sender: 'photo-picker-app'
+      sender: 'photo-picker-app',
+      senderId: window.name || Math.random().toString()
     };
     
     // 使用 localStorage 事件進行跨分頁通訊
     localStorage.setItem('broadcast_message', JSON.stringify(message));
     // 立即移除，觸發其他分頁的 storage 事件
-    localStorage.removeItem('broadcast_message');
+    setTimeout(() => {
+      localStorage.removeItem('broadcast_message');
+    }, 100);
   };
 
-  // 監聽其他分頁的訊息
+  // 監聽其他分頁的訊息（包含不同視窗）
   useEffect(() => {
+    // 設置視窗ID
+    if (!window.name) {
+      window.name = 'tab_' + Math.random().toString(36).substr(2, 9);
+    }
+
     const handleStorageChange = (e) => {
       if (e.key === 'broadcast_message' && e.newValue) {
         try {
           const message = JSON.parse(e.newValue);
-          if (message.sender === 'photo-picker-app') {
+          if (message.sender === 'photo-picker-app' && message.senderId !== window.name) {
             handleBroadcastMessage(message);
           }
         } catch (error) {
           console.error('解析廣播訊息失敗:', error);
         }
       }
+
+      // 監聽房間資料的直接變更
+      if (e.key && e.key.startsWith('room_') && e.newValue && roomCode) {
+        if (e.key === `room_${roomCode}`) {
+          try {
+            const updatedRoomData = JSON.parse(e.newValue);
+            if (updatedRoomData.lastUpdated > lastSyncTime) {
+              setRoomData(updatedRoomData);
+              setPhotos(updatedRoomData.photos || []);
+              setUsers(updatedRoomData.users || []);
+              setLastSyncTime(updatedRoomData.lastUpdated);
+            }
+          } catch (error) {
+            console.error('同步房間資料失敗:', error);
+          }
+        }
+      }
+    };
+
+    const handleFocus = () => {
+      // 視窗獲得焦點時強制同步
+      syncRoomData();
+    };
+
+    const handleVisibilityChange = () => {
+      // 頁面變為可見時強制同步
+      if (!document.hidden) {
+        syncRoomData();
+      }
     };
 
     window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, [roomCode]);
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [roomCode, lastSyncTime]);
 
   // 處理來自其他分頁的訊息
   const handleBroadcastMessage = (message) => {
@@ -140,13 +184,13 @@ const App = () => {
     }
   };
 
-  // 定期同步資料（每2秒檢查一次）
+  // 定期同步資料（每1.5秒檢查一次，更頻繁）
   useEffect(() => {
     if (!roomCode || !isConnected) return;
 
     const syncInterval = setInterval(() => {
       syncRoomData();
-    }, 2000);
+    }, 1500);
 
     return () => clearInterval(syncInterval);
   }, [roomCode, isConnected, lastSyncTime]);
@@ -341,7 +385,7 @@ const App = () => {
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-2 text-center">
-                可以在新分頁開啟相同網址測試多人功能
+                可以在新分頁或新視窗開啟相同網址測試多人功能
               </p>
             </div>
           </div>
@@ -362,7 +406,7 @@ const App = () => {
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
               <Wifi size={16} />
-              多分頁同步
+              多視窗同步
             </div>
             <RefreshCw className="text-gray-400 animate-spin" size={16} title="即時同步中" />
             <button
@@ -396,7 +440,7 @@ const App = () => {
           </div>
           
           <div className="text-xs text-green-600">
-            💡 提示: 複製房間代碼，在新分頁或其他瀏覽器分頁加入來測試多人功能
+            💡 提示: 複製房間代碼，在新分頁或新視窗加入來測試多人功能
           </div>
         </div>
 
@@ -461,7 +505,7 @@ const App = () => {
           >
             <Upload className="text-gray-400" size={32} />
             <span className="text-gray-600 font-medium">點擊上傳照片（可多選）</span>
-            <span className="text-xs text-gray-500">上傳後會即時同步到所有分頁</span>
+            <span className="text-xs text-gray-500">上傳後會即時同步到所有視窗</span>
           </button>
         </div>
 
@@ -545,7 +589,7 @@ const App = () => {
         <div className="text-center py-12 text-gray-500">
           <Image size={64} className="mx-auto mb-4 text-gray-300" />
           <p className="text-lg">還沒有照片，開始上傳吧！</p>
-          <p className="text-sm mt-2">支援多分頁即時同步</p>
+          <p className="text-sm mt-2">支援多視窗即時同步</p>
         </div>
       )}
     </div>
