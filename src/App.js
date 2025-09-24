@@ -42,11 +42,15 @@ const App = () => {
     setPhotos([]);
     setUsers([]);
     
-    // 存儲到 localStorage
-    localStorage.setItem(`room_${code}`, JSON.stringify(newRoomData));
+    // 安全地存儲到 localStorage
+    const success = safeSetItem(`room_${code}`, JSON.stringify(newRoomData));
     
-    // 廣播給其他分頁
-    broadcastToOtherTabs('room_created', { roomCode: code, roomData: newRoomData });
+    if (success) {
+      // 廣播給其他分頁
+      broadcastToOtherTabs('room_created', { roomCode: code, roomData: newRoomData });
+    } else {
+      console.error('房間創建失敗');
+    }
   };
 
   // 加入房間
@@ -250,11 +254,16 @@ const App = () => {
     setRoomData(updatedData);
     setLastSyncTime(updatedData.lastUpdated);
     
-    // 存儲到 localStorage
-    localStorage.setItem(`room_${roomCode}`, JSON.stringify(updatedData));
+    // 安全地存儲到 localStorage
+    const success = safeSetItem(`room_${roomCode}`, JSON.stringify(updatedData));
     
-    // 通知其他分頁資料已更新
-    broadcastToOtherTabs('room_updated', { roomCode, roomData: updatedData });
+    if (success) {
+      // 通知其他分頁資料已更新
+      broadcastToOtherTabs('room_updated', { roomCode, roomData: updatedData });
+    } else {
+      console.error('房間資料更新失敗');
+      alert('資料儲存失敗，請嘗試上傳較小的圖片');
+    }
   };
 
   // 添加用戶
@@ -267,42 +276,110 @@ const App = () => {
     }
   };
 
+  // 壓縮圖片函數
+  const compressImage = (file, maxWidth = 800, quality = 0.7) => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      
+      img.onload = () => {
+        // 計算新尺寸
+        let { width, height } = img;
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        // 繪製壓縮後的圖片
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // 轉換為壓縮的 Base64
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedDataUrl);
+      };
+      
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  // 安全的 localStorage 設定
+  const safeSetItem = (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (error) {
+      if (error.name === 'QuotaExceededError') {
+        console.warn('localStorage 空間不足，正在清理舊資料...');
+        // 清理其他房間的舊資料
+        const allKeys = Object.keys(localStorage);
+        const roomKeys = allKeys.filter(k => k.startsWith('room_') && k !== key);
+        roomKeys.forEach(k => localStorage.removeItem(k));
+        
+        // 再次嘗試
+        try {
+          localStorage.setItem(key, value);
+          return true;
+        } catch (secondError) {
+          console.error('localStorage 儲存失敗，即使清理後仍然空間不足');
+          alert('照片太大，請嘗試較小的檔案');
+          return false;
+        }
+      }
+      console.error('localStorage 設定失敗:', error);
+      return false;
+    }
+  };
+
   // 處理照片上傳
-  const handleFileUpload = (event) => {
+  const handleFileUpload = async (event) => {
     const files = Array.from(event.target.files);
     let processedFiles = 0;
     const newPhotos = [];
     
     if (files.length === 0) return;
     
-    files.forEach((file, index) => {
+    // 顯示上傳進度提示
+    console.log(`開始處理 ${files.length} 個檔案...`);
+    
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      
       if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
+        try {
+          // 壓縮圖片
+          const compressedDataUrl = await compressImage(file);
+          
           const newPhoto = {
             id: Date.now() + Math.random() + index,
-            url: e.target.result,
+            url: compressedDataUrl,
             name: file.name,
             votes: {},
             totalVotes: 0,
             uploadedBy: currentUser || 'Unknown',
-            uploadedAt: Date.now()
+            uploadedAt: Date.now(),
+            compressed: true
           };
           
           newPhotos.push(newPhoto);
-          processedFiles++;
-          
-          if (processedFiles === files.filter(f => f.type.startsWith('image/')).length) {
-            const updatedPhotos = [...photos, ...newPhotos];
-            setPhotos(updatedPhotos);
-            updateRoomData({ photos: updatedPhotos });
-          }
-        };
-        reader.readAsDataURL(file);
-      } else {
-        processedFiles++;
+          console.log(`照片 ${file.name} 壓縮完成`);
+        } catch (error) {
+          console.error(`處理照片 ${file.name} 失敗:`, error);
+        }
       }
-    });
+      
+      processedFiles++;
+    }
+    
+    if (newPhotos.length > 0) {
+      const updatedPhotos = [...photos, ...newPhotos];
+      setPhotos(updatedPhotos);
+      updateRoomData({ photos: updatedPhotos });
+      console.log(`成功上傳 ${newPhotos.length} 張照片`);
+    }
     
     event.target.value = '';
   };
@@ -547,7 +624,7 @@ const App = () => {
           >
             <Upload className="text-gray-400" size={32} />
             <span className="text-gray-600 font-medium">點擊上傳照片（可多選）</span>
-            <span className="text-xs text-gray-500">上傳後會即時同步到所有視窗</span>
+            <span className="text-xs text-gray-500">自動壓縮圖片以節省空間</span>
           </button>
         </div>
 
