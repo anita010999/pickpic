@@ -68,19 +68,13 @@ const App = () => {
         .select()
         .single();
 
-      if (error) {
-        console.error('創建房間錯誤:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       setRoomCode(code);
       setRoomId(data.id);
       setIsHost(true);
       setIsConnected(true);
       
-      console.log('房間創建成功:', code, data.id);
-      
-      // 開始即時監聽
       subscribeToRoom(data.id);
       
     } catch (error) {
@@ -116,12 +110,7 @@ const App = () => {
       setIsConnected(true);
       setJoinRoomCode('');
       
-      console.log('加入房間成功:', code, data.id);
-      
-      // 載入房間資料
       await loadRoomData(data.id);
-      
-      // 開始即時監聽
       subscribeToRoom(data.id);
       
     } catch (error) {
@@ -135,72 +124,42 @@ const App = () => {
   // 載入房間資料
   const loadRoomData = async (currentRoomId) => {
     try {
-      console.log('載入房間資料:', currentRoomId);
-      
-      // 載入照片
-      const { data: photosData, error: photosError } = await supabase
+      const { data: photosData } = await supabase
         .from('photos')
         .select('*')
         .eq('room_id', currentRoomId)
         .order('uploaded_at', { ascending: false });
 
-      if (photosError) {
-        console.error('載入照片失敗:', photosError);
-      } else {
-        console.log('載入照片成功:', photosData?.length || 0, '張');
-        setPhotos(photosData || []);
-      }
-
-      // 載入用戶
-      const { data: usersData, error: usersError } = await supabase
+      const { data: usersData } = await supabase
         .from('room_users')
         .select('user_name')
         .eq('room_id', currentRoomId);
 
-      if (usersError) {
-        console.error('載入用戶失敗:', usersError);
-      } else {
-        console.log('載入用戶成功:', usersData?.length || 0, '個');
-        setUsers(usersData?.map(u => u.user_name) || []);
-      }
+      setPhotos(photosData || []);
+      setUsers(usersData?.map(u => u.user_name) || []);
       
     } catch (error) {
       console.error('載入房間資料失敗:', error);
     }
   };
 
-  // 即時監聽房間變化
+  // 即時監聽
   const subscribeToRoom = (currentRoomId) => {
-    console.log('開始監聽房間變化:', currentRoomId);
-    
-    // 監聽照片變化
-    const photosSubscription = supabase
+    supabase
       .channel(`photos_${currentRoomId}`)
       .on('postgres_changes', 
         { event: '*', schema: 'public', table: 'photos', filter: `room_id=eq.${currentRoomId}` },
-        (payload) => {
-          console.log('照片資料變化:', payload.eventType);
-          loadRoomData(currentRoomId);
-        }
+        () => loadRoomData(currentRoomId)
       )
       .subscribe();
 
-    // 監聽用戶變化
-    const usersSubscription = supabase
+    supabase
       .channel(`users_${currentRoomId}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'room_users', filter: `room_id=eq.${currentRoomId}` },
-        (payload) => {
-          console.log('用戶資料變化:', payload.eventType);
-          loadRoomData(currentRoomId);
-        }
+        () => loadRoomData(currentRoomId)
       )
       .subscribe();
-
-    return () => {
-      photosSubscription.unsubscribe();
-      usersSubscription.unsubscribe();
-    };
   };
 
   // 添加用戶
@@ -218,13 +177,8 @@ const App = () => {
           }
         ]);
 
-      if (error) {
-        console.error('添加用戶失敗:', error);
-        throw error;
-      }
-
+      if (error) throw error;
       setNewUserName('');
-      console.log('用戶添加成功');
       
     } catch (error) {
       console.error('添加用戶失敗:', error);
@@ -232,13 +186,11 @@ const App = () => {
     }
   };
 
-  // 上傳照片到 Supabase Storage
+  // 上傳照片
   const uploadPhotoToStorage = async (file, fileName) => {
     const fileExt = file.name.split('.').pop();
     const uniqueFileName = `${fileName}.${fileExt}`;
     const filePath = `${roomCode}/${uniqueFileName}`;
-
-    console.log('開始上傳到 Storage:', filePath);
 
     const { data, error } = await supabase.storage
       .from('photos')
@@ -247,14 +199,8 @@ const App = () => {
         upsert: false
       });
 
-    if (error) {
-      console.error('Storage 上傳失敗:', error);
-      throw error;
-    }
+    if (error) throw error;
 
-    console.log('Storage 上傳成功:', data.path);
-
-    // 獲取公開 URL
     const { data: urlData } = supabase.storage
       .from('photos')
       .getPublicUrl(filePath);
@@ -277,7 +223,6 @@ const App = () => {
     
     try {
       const imageFiles = files.filter(file => file.type.startsWith('image/'));
-      console.log(`開始處理 ${imageFiles.length} 個圖片檔案`);
 
       for (let i = 0; i < imageFiles.length; i++) {
         const file = imageFiles[i];
@@ -286,11 +231,8 @@ const App = () => {
           setUploadStatus(`上傳照片 ${i + 1}/${imageFiles.length}: ${file.name}`);
           
           const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
-          
-          // 上傳到 Storage
           const { publicUrl } = await uploadPhotoToStorage(file, fileName);
 
-          // 儲存到資料庫
           const { error: dbError } = await supabase
             .from('photos')
             .insert([
@@ -304,13 +246,8 @@ const App = () => {
               }
             ]);
 
-          if (dbError) {
-            console.error('資料庫儲存失敗:', dbError);
-            throw dbError;
-          }
-
+          if (dbError) throw dbError;
           setUploadProgress(((i + 1) / imageFiles.length) * 100);
-          console.log(`照片上傳成功 ${i + 1}/${imageFiles.length}: ${file.name}`);
           
         } catch (error) {
           console.error(`上傳 ${file.name} 失敗:`, error);
@@ -359,12 +296,7 @@ const App = () => {
         })
         .eq('id', photoId);
 
-      if (error) {
-        console.error('投票失敗:', error);
-        throw error;
-      }
-
-      console.log('投票更新成功');
+      if (error) throw error;
       
     } catch (error) {
       console.error('投票失敗:', error);
@@ -380,31 +312,18 @@ const App = () => {
       const photo = photos.find(p => p.id === photoId);
       if (!photo) return;
 
-      // 從 Storage 刪除檔案
       const urlParts = photo.file_url.split('/');
       const fileName = urlParts[urlParts.length - 1];
       const filePath = `${roomCode}/${fileName}`;
       
-      const { error: storageError } = await supabase.storage
-        .from('photos')
-        .remove([filePath]);
+      await supabase.storage.from('photos').remove([filePath]);
 
-      if (storageError) {
-        console.error('Storage 刪除失敗:', storageError);
-      }
-
-      // 從資料庫刪除記錄
       const { error: dbError } = await supabase
         .from('photos')
         .delete()
         .eq('id', photoId);
 
-      if (dbError) {
-        console.error('資料庫刪除失敗:', dbError);
-        throw dbError;
-      }
-
-      console.log('照片刪除成功');
+      if (dbError) throw dbError;
       
     } catch (error) {
       console.error('刪除照片失敗:', error);
@@ -454,14 +373,8 @@ const App = () => {
           <AlertCircle className="text-red-500 mx-auto mb-4" size={48} />
           <h1 className="text-xl font-bold text-gray-800 mb-2">連線失敗</h1>
           <p className="text-gray-600 text-sm mb-4">
-            無法連接到 Supabase 資料庫，請檢查：
+            無法連接到 Supabase 資料庫，請檢查網路連線
           </p>
-          <ul className="text-left text-sm text-gray-600 mb-4">
-            <li>• 網路連線是否正常</li>
-            <li>• Supabase 專案是否已啟動</li>
-            <li>• API 金鑰是否正確</li>
-            <li>• 資料庫表格是否已建立</li>
-          </ul>
           <button 
             onClick={() => window.location.reload()} 
             className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
@@ -501,9 +414,6 @@ const App = () => {
                 {loading ? <Loader className="animate-spin" size={20} /> : <Cloud size={20} />}
                 {loading ? '創建中...' : '創建雲端房間'}
               </button>
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                無限制照片上傳，跨裝置即時同步
-              </p>
             </div>
 
             <div className="border-t pt-6">
@@ -529,9 +439,6 @@ const App = () => {
                   {loading ? <Loader className="animate-spin" size={16} /> : '加入'}
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                支援手機、電腦、平板同時使用
-              </p>
             </div>
           </div>
         </div>
@@ -568,15 +475,13 @@ const App = () => {
               <Share2 className="text-blue-600" size={20} />
               房間代碼: <span className="font-mono text-lg text-blue-600">{roomCode}</span>
             </h2>
-            <div className="flex gap-2">
-              <button
-                onClick={copyRoomCode}
-                className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                title="複製房間代碼"
-              >
-                <Copy size={16} />
-              </button>
-            </div>
+            <button
+              onClick={copyRoomCode}
+              className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              title="複製房間代碼"
+            >
+              <Copy size={16} />
+            </button>
           </div>
           
           <div className="text-sm text-gray-600 mb-2">
@@ -584,7 +489,7 @@ const App = () => {
           </div>
           
           <div className="text-xs text-green-600">
-            ☁️ 雲端版本：無限制照片上傳，支援任何裝置即時同步
+            雲端版本：無限制照片上傳，支援任何裝置即時同步
           </div>
         </div>
 
@@ -701,10 +606,6 @@ const App = () => {
                   src={photo.file_url}
                   alt={photo.file_name}
                   className="w-full h-48 object-cover"
-                  onError={(e) => {
-                    console.error('圖片載入失敗:', photo.file_url);
-                    e.target.style.display = 'none';
-                  }}
                 />
                 <button
                   onClick={() => deletePhoto(photo.id)}
@@ -737,4 +638,33 @@ const App = () => {
                     }`}
                   >
                     <Heart 
-                      size={16}
+                      size={16} 
+                      fill={photo.votes?.[currentUser] ? 'white' : 'none'}
+                    />
+                    <span className="text-sm">喜歡</span>
+                  </button>
+                </div>
+                
+                {photo.totalVotes > 0 && (
+                  <div className="text-xs text-gray-500">
+                    投票者: {Object.keys(photo.votes || {}).join(', ')}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {photos.length === 0 && !loading && (
+        <div className="text-center py-12 text-gray-500">
+          <Cloud size={64} className="mx-auto mb-4 text-gray-300" />
+          <p className="text-lg">還沒有照片，開始上傳吧！</p>
+          <p className="text-sm mt-2">雲端版本支援無限制照片上傳</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
