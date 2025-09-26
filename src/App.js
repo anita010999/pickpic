@@ -306,9 +306,11 @@ const App = () => {
 
   // 刪除照片 - 替換 confirm 為 window.confirm
   const deletePhoto = async (photoId) => {
-    // 使用 window.confirm 避免 ESLint 錯誤
-    const shouldDelete = window.confirm('確定要刪除這張照片嗎？');
-    if (!shouldDelete) return;
+  const handleConfirm = () => {
+  if (window.confirm("Are you sure?")) {
+    // do something
+  }
+};
 
     try {
       const photo = photos.find(p => p.id === photoId);
