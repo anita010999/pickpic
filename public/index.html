@@ -5,21 +5,63 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#8b5cf6" />
-    <meta
-      name="description"
-      content="多人照片選擇器 - 讓所有人一起參與選照片"
-    />
+    <meta name="description" content="多人照片選擇器 - 讓所有人一起參與選照片" />
     <title>照片選擇器</title>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <section class="uploader">
-  <h3>Upload a photo</h3>
-  <input id="fileInput" type="file" accept="image/*">
-  <button id="uploadBtn">Upload</button>
-  <p id="uploadStatus"></p>
-</section>
+
   <body>
     <noscript>您需要啟用 JavaScript 來執行此應用程式。</noscript>
     <div id="root"></div>
+
+    <section class="uploader">
+      <h3>Upload a photo</h3>
+      <input id="fileInput" type="file" accept="image/*" />
+      <button id="uploadBtn">Upload</button>
+      <p id="uploadStatus"></p>
+    </section>
+
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <script>
+      const supabase = window.supabase.createClient(
+        'YOUR_SUPABASE_URL',
+        'YOUR_SUPABASE_ANON_KEY'
+      );
+
+      const fileInput = document.getElementById('fileInput');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const uploadStatus = document.getElementById('uploadStatus');
+
+      uploadBtn.onclick = async function () {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          uploadStatus.textContent = 'Please choose a file first.';
+          return;
+        }
+
+        uploadStatus.textContent = 'Uploading...';
+        const path = `uploads/${Date.now()}-${file.name}`;
+
+        const { error: upErr } = await supabase.storage.from('photos').upload(path, file);
+        if (upErr) {
+          uploadStatus.textContent = 'Upload error: ' + upErr.message;
+          return;
+        }
+
+        const { data: pub } = supabase.storage.from('photos').getPublicUrl(path);
+        const url = pub.publicUrl;
+
+        const { error: dbErr } = await supabase.from('photos').insert({
+          filename: file.name,
+          url: url
+        });
+        if (dbErr) {
+          uploadStatus.textContent = 'DB error: ' + dbErr.message;
+          return;
+        }
+
+        uploadStatus.textContent = 'Done! File uploaded.';
+      };
+    </script>
   </body>
 </html>
