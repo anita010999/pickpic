@@ -3,8 +3,8 @@ import { Upload, Heart, X, Users, Trophy, Image, Share2, Copy, Cloud, Loader, Al
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase 配置
-const supabaseUrl = 'https://bmtrsorncvwwcfixqvcd.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJtdHJzb3JuY3Z3d2NmaXhxdmNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg2ODA1NDUsImV4cCI6MjA3NDI1NjU0NX0.U59kJUCLVds-pWbXxD2q5vLxa_VwmacUmmDjcWUoUQY';
+const supabaseUrl = 'https://tmmracudrwheszgkrjtj.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtbXJhY3VkcndoZXN6Z2tyanRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4NzIwNDAsImV4cCI6MjA3NDQ0ODA0MH0.r9ZKakVQIAhsdBVW3xwGmz-7_feO7McFmcpb-veZrbo';
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
